@@ -1,0 +1,27 @@
+name: Deploy Package with Chocolatey from JFrog
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Chocolatey
+      run: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+    - name: Configure Chocolatey to use JFrog Artifactory
+      run: |
+        choco source add --name=myjfrog --source=https://<your-jfrog-domain>/artifactory/api/nuget/<your-repo> --user=<your-username> --password=<your-password>
+
+    - name: Install Package
+      run: choco install <your-package-id> --version=<your-package-version> --source=myjfrog
