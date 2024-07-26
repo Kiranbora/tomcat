@@ -1,0 +1,77 @@
+name: Deploy to Linux VM with Tomcat
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v1
+      with:
+        java-version: '11'
+
+    - name: Build with Gradle
+      run: ./gradlew build
+
+    - name: Copy WAR file via SSH
+      uses: appleboy/scp-action@v0.1.1
+      with:
+        host: ${{ secrets.LINUX_VM_IP }}
+        username: ${{ secrets.LINUX_VM_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "build/libs/*.war"
+        target: "/tmp"
+
+    - name: SSH and install Tomcat
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.LINUX_VM_IP }}
+        username: ${{ secrets.LINUX_VM_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          sudo apt update
+          sudo apt install openjdk-11-jdk -y
+          sudo useradd -m -U -d /opt/tomcat -s /bin/false tomcat
+          sudo apt install wget -y
+          wget https://archive.apache.org/dist/tomcat/tomcat-9/v9.0.53/bin/apache-tomcat-9.0.53.tar.gz
+          sudo mkdir /opt/tomcat
+          sudo tar xzvf apache-tomcat-9*tar.gz -C /opt/tomcat --strip-components=1
+          sudo chown -R tomcat: /opt/tomcat
+          sudo sh -c 'chmod +x /opt/tomcat/bin/*.sh'
+          sudo sh -c 'cat > /etc/systemd/system/tomcat.service << EOF
+          [Unit]
+          Description=Apache Tomcat Web Application Container
+          After=network.target
+
+          [Service]
+          Type=forking
+
+          User=tomcat
+          Group=tomcat
+
+          Environment="JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64"
+          Environment="CATALINA_PID=/opt/tomcat/temp/tomcat.pid"
+          Environment="CATALINA_HOME=/opt/tomcat"
+          Environment="CATALINA_BASE=/opt/tomcat"
+          Environment="CATALINA_OPTS=-Xms512M -Xmx1024M -server -XX:+UseParallelGC"
+          Environment="JAVA_OPTS=-Djava.awt.headless=true -Djava.security.egd=file:/dev/./urandom"
+
+          ExecStart=/opt/tomcat/bin/startup.sh
+          ExecStop=/opt/tomcat/bin/shutdown.sh
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF'
+          sudo systemctl daemon-reload
+          sudo systemctl start tomcat
+          sudo systemctl enable tomcat
+          sudo mv /tmp/*.war /opt/tomcat/webapps/
+          sudo systemctl restart tomcat
